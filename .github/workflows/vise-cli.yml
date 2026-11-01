@@ -1,0 +1,166 @@
+name: vise-cli release
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vise-cli-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check-release:
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      release_exists: ${{ steps.release.outputs.exists }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - id: version
+        shell: bash
+        run: |
+          version="$(awk '
+            /^\[package\]$/ { in_package = 1; next }
+            /^\[/ { in_package = 0 }
+            in_package && /^version[[:space:]]*=/ {
+              sub(/^[^"]*"/, "")
+              sub(/".*/, "")
+              print
+              exit
+            }
+          ' crates/vise-cli/Cargo.toml)"
+          if [[ -z "$version" ]]; then
+            echo "Could not read the vise-cli package version" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - id: release
+        uses: actions/github-script@v9
+        env:
+          RELEASE_TAG: v${{ steps.version.outputs.version }}
+        with:
+          script: |
+            const tag = process.env.RELEASE_TAG;
+            try {
+              await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag,
+              });
+              core.setOutput('exists', 'true');
+              core.info(`Release ${tag} already exists; skipping build.`);
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              core.setOutput('exists', 'false');
+              core.info(`Release ${tag} is missing; building it.`);
+            }
+
+  prepare-models:
+    needs: check-release
+    if: needs.check-release.outputs.release_exists == 'false'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Burn ONNX converter
+        run: cargo install burn-onnx --version 0.22.0 --locked
+
+      - name: Download and convert Bekko A8M
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="model/bekko-embedding-v1-a8m"
+          base="https://huggingface.co/hotchpotch/bekko-embedding-v1-a8m/resolve/c721113d59a1d91b447450324f51c4b3332c924a"
+          mkdir -p "$dir/generated"
+          curl --fail --location --retry 3 "$base/onnx/model.onnx?download=true" -o "$dir/model.onnx"
+          curl --fail --location --retry 3 "$base/tokenizer.json?download=true" -o "$dir/tokenizer.json"
+          onnx2burn "$dir/model.onnx" "$dir/generated" --no-development
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: vise-bekko-a8m-${{ needs.check-release.outputs.version }}
+          path: |
+            model/bekko-embedding-v1-a8m/generated/model.rs
+            model/bekko-embedding-v1-a8m/generated/model.bpk
+            model/bekko-embedding-v1-a8m/tokenizer.json
+          if-no-files-found: error
+
+  build:
+    needs: [check-release, prepare-models]
+    if: needs.check-release.outputs.release_exists == 'false'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            platform: linux-x86_64
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+            platform: windows-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: vise-bekko-a8m-${{ needs.check-release.outputs.version }}
+          path: model/bekko-embedding-v1-a8m
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build release binary
+        run: cargo build --locked --release -p vise-cli --target ${{ matrix.target }}
+
+      - name: Prepare Linux artifact
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/vise dist/vise
+
+      - name: Prepare Windows artifact
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/vise.exe" "dist/vise.exe"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: vise-${{ needs.check-release.outputs.version }}-${{ matrix.platform }}
+          path: dist/vise*
+          if-no-files-found: error
+
+  publish-release:
+    needs: [check-release, build]
+    if: needs.check-release.outputs.release_exists == 'false'
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: vise-${{ needs.check-release.outputs.version }}-*
+          path: dist
+          merge-multiple: false
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: v${{ needs.check-release.outputs.version }}
+        run: >-
+          gh release create "$RELEASE_TAG" dist/*/vise* --target "$GITHUB_SHA"
+          --title "vise-cli $RELEASE_TAG" --generate-notes

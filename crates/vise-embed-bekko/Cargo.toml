@@ -1,0 +1,18 @@
+[package]
+name = "vise-embed-bekko"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = ["bekko-a8m", "cpu", "embedded-assets"]
+bekko-a8m = []
+bekko-a25m = []
+cpu = ["burn/flex", "burn/rayon", "burn/simd"]
+cuda = ["burn/cuda", "burn/fusion"]
+vulkan = ["burn/vulkan", "burn/fusion"]
+embedded-assets = []
+
+[dependencies]
+burn = { version = "0.22", default-features = false, features = ["std"] }
+burn-store = { version = "0.22", default-features = false, features = ["std"] }
+tokenizers = { version = "0.21", default-features = false, features = ["onig"] }

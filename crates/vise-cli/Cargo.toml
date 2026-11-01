@@ -1,0 +1,23 @@
+[package]
+name = "vise-cli"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "vise"
+path = "src/main.rs"
+
+[features]
+default = ["cpu", "cuda", "vulkan"]
+cpu = ["vise-embed-bekko/cpu"]
+cuda = ["vise-embed-bekko/cuda"]
+vulkan = ["vise-embed-bekko/vulkan"]
+
+[dependencies]
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+ctrlc = "3"
+indicatif = "0.17"
+mimalloc = "0.1"
+rayon = "1"
+vise-embed-bekko = { path = "../vise-embed-bekko", default-features = false, features = ["bekko-a8m", "embedded-assets"] }
+vise-vector-engine = { path = "../vise-vector-engine" }

@@ -1,0 +1,8 @@
+/target/
+/vise.exe
+/vise_old.exe
+
+# Downloaded model files and generated Burn weights are prepared by CI.
+/model/*/*
+!/model/*/LICENSE
+!/model/*/generate.ps1

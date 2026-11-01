@@ -1,0 +1,23 @@
+[workspace]
+members = [
+    "crates/vise-vector-engine",
+    "crates/vise-embed-bekko",
+    "crates/vise-cli",
+]
+# Keep bare `cargo run` on the root demo; select the CLI with `-p vise-cli`.
+default-members = [".", "crates/vise-vector-engine", "crates/vise-embed-bekko"]
+resolver = "3"
+
+[package]
+name = "vise"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+vise-vector-engine = { path = "crates/vise-vector-engine" }
+vise-embed-bekko = { path = "crates/vise-embed-bekko", default-features = false, features = ["bekko-a8m", "cpu", "embedded-assets"] }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+strip = true
